@@ -2,7 +2,6 @@ from burp import IBurpExtender, IHttpListener, IScannerCheck, IScanIssue
 from java.io import PrintWriter
 import re
 
-# Define the Burp Extender class
 class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck):
     
     def registerExtenderCallbacks(self, callbacks):
@@ -28,7 +27,8 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck):
             response = messageInfo.getResponse()
             analyzed_response = self._helpers.analyzeResponse(response)
             headers = analyzed_response.getHeaders()
-            body = response[analyzed_response.getBodyOffset():].tostring()
+            body_offset = analyzed_response.getBodyOffset()
+            body = response[body_offset:].tostring()  # Get response body
             
             # Check if the response is a JavaScript file
             content_type = [header for header in headers if header.lower().startswith("content-type:")]
@@ -41,26 +41,27 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck):
                 iv_matches = list(re.finditer(iv_pattern, body))
                 key_matches = list(re.finditer(key_pattern, body))
                 
-                if iv_matches and key_matches:
-                    self.highlightAndLogIssue(messageInfo, body, iv_matches, key_matches)
+                if iv_matches or key_matches:
+                    self.highlightAndLogIssue(messageInfo, body_offset, body, iv_matches, key_matches)
 
-    def highlightAndLogIssue(self, messageInfo, body, iv_matches, key_matches):
+    def highlightAndLogIssue(self, messageInfo, body_offset, body, iv_matches, key_matches):
         markers = []
-        for match in iv_matches + key_matches:
-            start = match.start()
-            end = match.end()
-            markers.append((start, end))  # Add start and end positions of each match
         
-        # Convert markers to a Burp-compatible format
-        request_highlight = []
-        response_highlight = [self._helpers.buildHttpResponseMarker(marker[0], marker[1]) for marker in markers]
+        # Collect byte offsets for each match (IV and Key)
+        for match in iv_matches + key_matches:
+            start = body_offset + match.start()
+            end = body_offset + match.end()
+            markers.append([start, end])  # Add start and end positions of each match
+        
+        # Create a list of highlighted markers for the response
+        response_highlight = markers
 
         # Log issue with the highlighted matches in the response
         url = self._helpers.analyzeRequest(messageInfo).getUrl()
         issue = CustomScanIssue(
             messageInfo.getHttpService(),
             url,
-            [self._callbacks.applyMarkers(messageInfo, request_highlight, response_highlight)],
+            [self._callbacks.applyMarkers(messageInfo, None, response_highlight)],  # Highlight response
             "Potential Key/IV Found",
             "Found potential IV and Key in JavaScript file.",
             "Information"
