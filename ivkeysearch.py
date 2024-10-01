@@ -1,5 +1,4 @@
 from burp import IBurpExtender, IHttpListener, IScannerCheck, IScanIssue
-from burp import IContextMenuFactory, IContextMenuInvocation
 from java.io import PrintWriter
 import re
 
@@ -39,23 +38,33 @@ class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck):
                 iv_pattern = r'["\']([a-zA-Z0-9+/=]{16,32})["\']'
                 key_pattern = r'["\']([a-zA-Z0-9+/=]{32,64})["\']'
                 
-                iv_matches = re.findall(iv_pattern, body)
-                key_matches = re.findall(key_pattern, body)
+                iv_matches = list(re.finditer(iv_pattern, body))
+                key_matches = list(re.finditer(key_pattern, body))
                 
                 if iv_matches and key_matches:
-                    self.logIssue(messageInfo, iv_matches, key_matches)
+                    self.highlightAndLogIssue(messageInfo, body, iv_matches, key_matches)
 
-    def logIssue(self, messageInfo, iv_matches, key_matches):
+    def highlightAndLogIssue(self, messageInfo, body, iv_matches, key_matches):
+        markers = []
+        for match in iv_matches + key_matches:
+            start = match.start()
+            end = match.end()
+            markers.append((start, end))  # Add start and end positions of each match
+        
+        # Convert markers to a Burp-compatible format
+        request_highlight = []
+        response_highlight = [self._helpers.buildHttpResponseMarker(marker[0], marker[1]) for marker in markers]
+
+        # Log issue with the highlighted matches in the response
         url = self._helpers.analyzeRequest(messageInfo).getUrl()
         issue = CustomScanIssue(
             messageInfo.getHttpService(),
             url,
-            [self._callbacks.applyMarkers(messageInfo, None, None)],
+            [self._callbacks.applyMarkers(messageInfo, request_highlight, response_highlight)],
             "Potential Key/IV Found",
-            "Found IV: {} and Key: {} in JavaScript file.".format(iv_matches, key_matches),
+            "Found potential IV and Key in JavaScript file.",
             "Information"
         )
-        # Add issue to the target tab
         self._callbacks.addScanIssue(issue)
 
 # Custom class for scan issues
